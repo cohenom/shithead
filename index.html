@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>Shithead</title>
+<meta name="description" content="Shithead — the card game, for iPhone.">
+
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shithead">
+<meta name="theme-color" content="#0f4a35" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#186b4d" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="light dark">
+
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="icon" href="icons/icon-192.png" sizes="192x192">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <header class="topbar" id="topbar">
+    <button class="chip" id="btn-new" type="button">New</button>
+    <div class="status" id="status" aria-live="polite">Shithead</div>
+    <button class="chip chip-icon" id="btn-rules" type="button" aria-label="House rules">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="12" cy="7.4" r="1.25" fill="currentColor"/><path d="M12 10.6v6.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></svg>
+    </button>
+  </header>
+
+  <main id="board" class="pre-game">
+    <section id="opponents" class="opponents"></section>
+
+    <section id="table" class="table">
+      <div class="table-slot">
+        <div class="pile deck" id="deck" data-empty-label="Empty">
+          <div class="pile-cards" id="deck-cards"></div>
+        </div>
+        <div class="pile-label"><span id="deck-count">0</span> in stock</div>
+      </div>
+
+      <div class="table-slot table-slot-main">
+        <div class="pile discard" id="discard">
+          <div class="pile-cards" id="discard-cards"></div>
+          <div class="pile-ghost" id="discard-ghost">Any card</div>
+        </div>
+        <div class="pile-label" id="discard-label">Pile</div>
+      </div>
+
+      <div class="table-slot">
+        <div class="pile burn" id="burn">
+          <div class="pile-cards" id="burn-cards"></div>
+        </div>
+        <div class="pile-label"><span id="burn-count">0</span> burned</div>
+      </div>
+    </section>
+
+    <section id="me" class="me">
+      <div class="stacks-caption" id="stacks-caption"></div>
+      <div class="my-stacks" id="my-stacks"></div>
+      <div class="my-hand-wrap">
+        <div class="my-hand" id="my-hand"></div>
+      </div>
+    </section>
+  </main>
+
+  <div class="actionbar" id="actionbar">
+    <button class="btn btn-primary" id="btn-action" type="button" hidden></button>
+    <button class="btn btn-ghost" id="btn-secondary" type="button" hidden></button>
+  </div>
+
+  <div class="fx" id="fx" aria-hidden="true"></div>
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+</div>
+
+<!-- ───────────────────────────── sheets ───────────────────────────── -->
+
+<div class="sheet" id="sheet-setup" hidden>
+  <div class="sheet-scrim" data-close></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="New game">
+    <div class="grabber"></div>
+    <div class="sheet-body">
+      <h1 class="display">Shithead</h1>
+      <p class="lede">Shed every card — hand, then face-up, then the three you've never seen.</p>
+
+      <h2 class="section-title">Players</h2>
+      <div class="segmented" id="player-count" role="radiogroup" aria-label="Number of players">
+        <button type="button" role="radio" data-n="2" aria-checked="true" class="on">You + 1 bot</button>
+        <button type="button" role="radio" data-n="3" aria-checked="false">You + 2</button>
+        <button type="button" role="radio" data-n="4" aria-checked="false">You + 3</button>
+      </div>
+
+      <button class="btn btn-primary btn-wide" id="btn-deal" type="button">Deal</button>
+      <button class="btn btn-ghost btn-wide" id="btn-rules-2" type="button">How to play</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet-rules" hidden>
+  <div class="sheet-scrim" data-close></div>
+  <div class="sheet-panel sheet-tall" role="dialog" aria-modal="true" aria-label="House rules">
+    <div class="grabber"></div>
+    <div class="sheet-body sheet-scroll">
+      <h1 class="display">House Rules</h1>
+
+      <h2 class="section-title">The goal</h2>
+      <p>Get rid of all your cards. You play your <b>hand</b> first, then your three <b>face-up</b> cards, then your three <b>blind</b> cards — one at a time, sight unseen. First one out wins; play carries on for the places behind.</p>
+
+      <h2 class="section-title">Setup <span class="tag">this app's house rule</span></h2>
+      <p>Everyone gets 3 blind cards face-down, then 6 cards in hand. Before play you choose <b>exactly 3 of those 6</b> to lay face-up on your blind cards — those are your endgame. The other 3 are your starting hand.</p>
+      <p class="note">Classic Shithead instead deals the face-up row at random and never lets you choose. Choosing is strictly better and much more fun, so that's what this app does.</p>
+
+      <h2 class="section-title">A turn</h2>
+      <ul>
+        <li>Play a card <b>equal or higher</b> than the top of the pile. You may play several cards of the <b>same rank</b> at once.</li>
+        <li>Ace is high. Suits never matter.</li>
+        <li>While the stock lasts, top your hand back up to 3 after every play.</li>
+        <li><b>No legal play? You take the whole pile</b> into your hand, and your turn ends. There's no voluntary pick-up here — if you can play, you must.</li>
+        <li>An empty pile accepts anything.</li>
+      </ul>
+
+      <h2 class="section-title">Special cards</h2>
+      <div class="rule-row"><span class="rank-chip">2</span><div><b>Wild, and a reset.</b> Playable on anything. The next player may then play anything.</div></div>
+      <div class="rule-row"><span class="rank-chip">10</span><div><b>Burns the pile.</b> The whole pile leaves the game for good, and you go again on a fresh pile. Playable on anything.</div></div>
+      <div class="rule-row"><span class="rank-chip">7</span><div><b>Under seven.</b> The next play must be <b>7 or lower</b> — except a 2 or a 10, which are always legal. Normal rules resume after it.</div></div>
+      <div class="rule-row"><span class="rank-chip">8</span><div><b>Skip.</b> The next player loses their turn entirely. Two 8s skip two players. <span class="tag">house addition</span></div></div>
+      <div class="rule-row"><span class="rank-chip">4×</span><div><b>Four of a kind burns.</b> Four cards of the same rank on top of the pile — even if they arrived over several turns — burn it. Whoever laid the fourth goes again.</div></div>
+
+      <h2 class="section-title">Blind cards</h2>
+      <p>With hand and face-up gone, tap a blind card to turn it over. If it happens to be legal it's played. If not, you swallow the pile (with that card on top) and you're back to playing from your hand.</p>
+
+      <h2 class="section-title">Controls</h2>
+      <ul>
+        <li><b>Tap</b> a card to pick it up; tap more of the same rank to stack them.</li>
+        <li><b>Drag</b> onto the pile to play, or hit the play button.</li>
+        <li>Cards you can't legally play are dimmed.</li>
+      </ul>
+      <p class="note">First turn goes to whoever holds the lowest card in hand after the swap (ties broken by suit: ♣ ♦ ♥ ♠).</p>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="sheet-over" hidden>
+  <div class="sheet-scrim" data-close></div>
+  <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="Results">
+    <div class="grabber"></div>
+    <div class="sheet-body">
+      <h1 class="display" id="over-title">Finished</h1>
+      <p class="lede" id="over-sub"></p>
+      <ol class="results" id="results"></ol>
+      <button class="btn btn-primary btn-wide" id="btn-again" type="button">Play again</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

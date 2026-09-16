@@ -1,0 +1,11 @@
+{
+  "name": "shithead",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shithead / Palace card game — static single-page iPhone web app.",
+  "scripts": {
+    "test": "node test-engine.mjs",
+    "serve": "python3 -m http.server 8000"
+  }
+}
