@@ -84,18 +84,86 @@
   <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="New game">
     <div class="grabber"></div>
     <div class="sheet-body">
-      <h1 class="display">Shithead</h1>
-      <p class="lede">Shed every card — hand, then face-up, then the three you've never seen.</p>
 
-      <h2 class="section-title">Players</h2>
-      <div class="segmented" id="player-count" role="radiogroup" aria-label="Number of players">
-        <button type="button" role="radio" data-n="2" aria-checked="true" class="on">You + 1 bot</button>
-        <button type="button" role="radio" data-n="3" aria-checked="false">You + 2</button>
-        <button type="button" role="radio" data-n="4" aria-checked="false">You + 3</button>
+      <div class="pane" id="pane-home">
+        <h1 class="display">Shithead</h1>
+        <p class="lede">Shed every card — hand, then face-up, then the three you've never seen.</p>
+        <button class="btn btn-primary btn-wide" id="btn-mode-bots" type="button">Play vs Bots</button>
+        <button class="btn btn-ghost btn-wide" id="btn-mode-online" type="button">Play Online</button>
+        <button class="btn btn-ghost btn-wide" id="btn-rules-2" type="button">How to play</button>
       </div>
 
-      <button class="btn btn-primary btn-wide" id="btn-deal" type="button">Deal</button>
-      <button class="btn btn-ghost btn-wide" id="btn-rules-2" type="button">How to play</button>
+      <div class="pane" id="pane-bots" hidden>
+        <h1 class="display">Play vs Bots</h1>
+        <p class="lede">Nora, Vik and Sam play a decent club game. They don't peek.</p>
+
+        <h2 class="section-title">Players</h2>
+        <div class="segmented" id="player-count" role="radiogroup" aria-label="Number of players">
+          <button type="button" role="radio" data-n="2" aria-checked="true" class="on">You + 1 bot</button>
+          <button type="button" role="radio" data-n="3" aria-checked="false">You + 2</button>
+          <button type="button" role="radio" data-n="4" aria-checked="false">You + 3</button>
+        </div>
+
+        <button class="btn btn-primary btn-wide" id="btn-deal" type="button">Deal</button>
+        <button class="btn btn-ghost btn-wide" data-pane="pane-home" type="button">Back</button>
+      </div>
+
+      <div class="pane" id="pane-online" hidden>
+        <h1 class="display">Play Online</h1>
+        <p class="lede">Two to four people, each on their own phone. No accounts, no sign-up — your phones talk straight to each other.</p>
+
+        <label class="field" for="my-name"><span>Your name</span>
+          <input id="my-name" type="text" maxlength="14" autocomplete="nickname"
+                 autocapitalize="words" placeholder="Omri" enterkeyhint="done">
+        </label>
+
+        <button class="btn btn-primary btn-wide" id="btn-host" type="button">Host a Party</button>
+        <button class="btn btn-ghost btn-wide" id="btn-join-pane" type="button">Join a Party</button>
+        <button class="btn btn-ghost btn-wide" data-pane="pane-home" type="button">Back</button>
+      </div>
+
+      <div class="pane" id="pane-host" hidden>
+        <h1 class="display">Your Party</h1>
+        <p class="lede" id="host-hint">Opening a room…</p>
+
+        <button class="room-code" id="room-code" type="button" aria-label="Room code — tap to copy the invite link">····</button>
+        <div class="qr-wrap"><canvas id="room-qr" aria-label="Scan to join"></canvas></div>
+
+        <p class="note">Read them the code, or let them point a camera at that square. Your phone is the table — if you close this tab, the party ends.</p>
+
+        <h2 class="section-title">At the table</h2>
+        <ul class="lobby-list" id="host-lobby"></ul>
+
+        <button class="btn btn-primary btn-wide" id="btn-start" type="button" disabled>Start</button>
+        <button class="btn btn-ghost btn-wide" id="btn-host-cancel" type="button">Cancel</button>
+      </div>
+
+      <div class="pane" id="pane-join" hidden>
+        <h1 class="display">Join a Party</h1>
+        <p class="lede">Ask the host for their four-letter code.</p>
+
+        <label class="field" for="join-code"><span>Room code</span>
+          <input id="join-code" type="text" maxlength="5" class="code-input"
+                 autocomplete="off" autocorrect="off" autocapitalize="characters"
+                 spellcheck="false" placeholder="ABCD" enterkeyhint="go">
+        </label>
+
+        <p class="lede" id="join-status" hidden></p>
+
+        <button class="btn btn-primary btn-wide" id="btn-join" type="button">Join</button>
+        <button class="btn btn-ghost btn-wide" data-pane="pane-online" type="button">Back</button>
+      </div>
+
+      <div class="pane" id="pane-wait" hidden>
+        <h1 class="display">You're in</h1>
+        <p class="lede" id="wait-hint">Waiting for the host to deal…</p>
+
+        <h2 class="section-title">At the table</h2>
+        <ul class="lobby-list" id="join-lobby"></ul>
+
+        <button class="btn btn-ghost btn-wide" id="btn-leave" type="button">Leave the party</button>
+      </div>
+
     </div>
   </div>
 </div>
@@ -133,6 +201,10 @@
       <h2 class="section-title">Blind cards</h2>
       <p>With hand and face-up gone, tap a blind card to turn it over. If it happens to be legal it's played. If not, you swallow the pile (with that card on top) and you're back to playing from your hand.</p>
 
+      <h2 class="section-title">Playing online <span class="tag">party</span></h2>
+      <p>One of you taps <b>Host a Party</b> and reads out the four-letter code (or holds up the QR square). Everyone else taps <b>Join a Party</b> and types it in. Two to four people, all on their own phones.</p>
+      <p>There's no server behind this — the phones talk straight to each other, and the host's phone <i>is</i> the table. If the host closes the tab, the party ends. Anyone else can drop out and rejoin the same seat.</p>
+
       <h2 class="section-title">Controls</h2>
       <ul>
         <li><b>Tap</b> a card to pick it up; tap more of the same rank to stack them.</li>
@@ -157,6 +229,17 @@
   </div>
 </div>
 
+<!-- Online party mode: PeerJS brokers the WebRTC handshake, qrcode draws the
+     invite square. Both are optional — if they fail to load the vs-bots game
+     still works, we just can't open or join a party. -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<!-- qrcode@1.5.4 no longer publishes a prebuilt browser bundle (build/qrcode.min.js
+     is 404 on every CDN), so we take jsDelivr's ESM build of the same pinned
+     version and hang it on window, which is all the QR drawing needs. -->
+<script type="module">
+  import QRCode from 'https://cdn.jsdelivr.net/npm/qrcode@1.5.4/+esm';
+  window.QRCode = QRCode;
+</script>
 <script type="module" src="app.js"></script>
 </body>
 </html>

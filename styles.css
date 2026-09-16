@@ -741,6 +741,116 @@ button { font: inherit; color: inherit; }
 }
 .segmented button:active { transform: scale(0.97); }
 
+/* ------------------------------------------------------- online party -- */
+
+.pane[hidden] { display: none; }
+
+.field {
+  display: block;
+  margin: 0 0 12px;
+}
+.field > span {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  color: var(--sheet-ink-dim);
+  margin: 0 0 7px;
+}
+.field input {
+  width: 100%;
+  min-height: 52px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(127, 127, 127, 0.16);
+  color: var(--sheet-ink);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.field input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.field input.code-input {
+  text-align: center;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-indent: 0.24em;       /* re-centre against the trailing letter-space */
+  text-transform: uppercase;
+}
+
+/* The code is the whole invite — big enough to read across a room, and a
+   button because tapping it copies the join link. */
+.room-code {
+  display: block;
+  width: 100%;
+  border: 0;
+  margin: 2px 0 14px;
+  padding: 16px 12px;
+  border-radius: 20px;
+  background: var(--card-face);
+  color: var(--card-ink);
+  font-size: clamp(40px, 13vw, 58px);
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-indent: 0.16em;
+  box-shadow: var(--shadow-1), inset 0 0 0 0.75px var(--card-edge);
+  transition: transform 110ms ease-out;
+}
+.room-code:active { transform: scale(0.975); }
+.room-code.copied { background: var(--accent); color: var(--accent-ink); }
+
+.qr-wrap {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 14px;
+}
+.qr-wrap canvas {
+  width: 168px;
+  height: 168px;
+  border-radius: 14px;
+  background: #fff;
+  padding: 9px;
+  box-shadow: var(--shadow-1);
+}
+.qr-wrap[hidden] { display: none; }
+
+.lobby-list { list-style: none; margin: 4px 0 6px; padding: 0; }
+.lobby-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 4px;
+  border-top: 1px solid var(--sheet-line);
+  font-size: 16px;
+  font-weight: 600;
+}
+.lobby-list li:last-child { border-bottom: 1px solid var(--sheet-line); }
+.lobby-list .dot {
+  flex: 0 0 auto;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.lobby-list li.off { opacity: 0.5; }
+.lobby-list li.off .dot { background: currentColor; }
+.lobby-list .tag { margin-left: auto; }
+.lobby-list .waiting {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sheet-ink-dim);
+}
+.lobby-list li.empty { opacity: 0.45; font-weight: 500; font-style: italic; }
+
+/* a seat whose phone has dropped off the party */
+.opp.is-offline { opacity: 0.45; }
+.opp.is-offline .opp-name::after { content: ' ⦸'; }
+
 .results { list-style: none; margin: 6px 0 4px; padding: 0; }
 .results li {
   display: flex;

@@ -9,8 +9,11 @@ import {
 } from './game.js';
 import { chooseSwap, chooseMove, thinkDelay } from './ai.js';
 import * as ui from './ui.js';
+import * as net from './network.js';
 
-const YOU = 0;
+/* Your own seat. Always 0 offline; online it's whatever seat the host gave
+   you, so everything below reads "me" through this one number. */
+let YOU = 0;
 const BOT_NAMES = ['Nora', 'Vik', 'Sam'];
 
 const app = {
@@ -21,7 +24,15 @@ const app = {
   swapPicks: [null, null, null],
   thinking: null,
   busy: false,
+
+  // online party mode — null for the offline vs-bots game
+  net: null,              // { isHost, session, send(action) }
+  netState: null,         // last redacted snapshot from the host
+  overShown: false,
 };
+
+const $ = (id) => document.getElementById(id);
+const online = () => !!app.net;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -73,6 +84,14 @@ function updateChrome() {
   const st = app.state;
   if (!st) return;
 
+  // Online: you've locked in your face-up row, everyone else hasn't yet.
+  if (online() && st.phase === 'swap' && app.mode !== 'swap') {
+    const ready = st.players.filter((p) => p.swapped).length;
+    ui.setStatus(`Waiting for players — ${ready}/${st.players.length} ready`);
+    ui.setActions({ primary: null, secondary: null });
+    return;
+  }
+
   if (app.mode === 'swap') {
     const n = app.swapPicks.filter(Boolean).length;
     ui.setStatus(n === 3 ? 'Happy with those three?' : `Choose ${3 - n} more for your face-up row`);
@@ -87,7 +106,10 @@ function updateChrome() {
   }
 
   if (st.current !== YOU) {
-    ui.setStatus(`${st.players[st.current].name} is thinking…`);
+    const them = st.players[st.current];
+    ui.setStatus(online()
+      ? (them.connected === false ? `${them.name} dropped out — waiting…` : `${them.name}'s turn`)
+      : `${them.name} is thinking…`);
     ui.setActions({ primary: null, secondary: null });
     return;
   }
@@ -124,12 +146,15 @@ function cardById(id) {
 /* ------------------------------------------------------- new game ------- */
 
 function deal() {
+  leaveParty({ quiet: true });
+  YOU = 0;
   const players = [{ name: 'You', isBot: false }];
   for (let i = 0; i < app.numPlayers - 1; i++) {
     players.push({ name: BOT_NAMES[i], isBot: true });
   }
   app.state = newGame({ players });
   app.mode = 'swap';
+  app.overShown = false;
   app.selection.clear();
   app.swapPicks = [null, null, null];
   app.thinking = null;
@@ -167,6 +192,15 @@ function swapReturn(id) {
 
 async function confirmSwap() {
   if (app.swapPicks.filter(Boolean).length !== 3) return;
+
+  // Online the host owns the deal: send the picks and wait for the state push
+  // that comes back with everyone else's readiness.
+  if (online()) {
+    const picks = app.swapPicks.slice();
+    app.net.send({ kind: 'swap', cardIds: picks });
+    return;
+  }
+
   await guarded(async () => {
     const prev = ui.snapshot();
     commitSwap(app.state, YOU, app.swapPicks.slice());
@@ -323,6 +357,11 @@ async function playSelection(extraId) {
   if (![...ids].every((id) => legal.has(id))) return false;
 
   app.selection.clear();
+  if (online()) {
+    app.net.send({ kind: 'play', cardIds: [...ids] });
+    render();
+    return true;
+  }
   await guarded(() => applyAction(YOU, () => playCards(app.state, YOU, [...ids])));
   render();
   runLoop();
@@ -332,6 +371,7 @@ async function playSelection(extraId) {
 async function takePile() {
   if (!interactive()) return;
   app.selection.clear();
+  if (online()) { app.net.send({ kind: 'pickup' }); render(); return; }
   await guarded(() => applyAction(YOU, () => pickUpPile(app.state, YOU)));
   render();
   runLoop();
@@ -343,6 +383,7 @@ async function flipMyBlind(slotIndex) {
   const card = me.blind[slotIndex];
   if (!card) return;
   const rect = ui.slotRect(slotIndex);
+  if (online()) { app.net.send({ kind: 'blind', cardId: card.id }); return; }
   await guarded(async () => {
     render();
     await ui.blindReveal(rect, card);
@@ -371,6 +412,7 @@ async function guarded(fn) {
 // Last line of defence: if anything ever leaves the game unable to accept
 // input on the player's own turn, unstick it rather than freezing.
 setInterval(() => {
+  if (online()) return;   // online, the host's pushes are the heartbeat
   if (!app.state || app.state.phase !== 'playing') return;
   // Fingerprint the game; any progress at all resets the clock, so long but
   // legitimate sequences (a bot burning and going again) are never disturbed.
@@ -397,7 +439,7 @@ setInterval(() => {
 let looping = false;
 
 async function runLoop() {
-  if (looping) return;
+  if (looping || online()) return;   // an online party is all humans
   looping = true;
   try {
     while (app.state.phase === 'playing' && app.state.players[app.state.current].isBot) {
@@ -438,6 +480,8 @@ async function runLoop() {
 /* ------------------------------------------------------------ results --- */
 
 function showResults() {
+  if (app.overShown) return;
+  app.overShown = true;
   app.mode = 'over';
   ui.closeAllSheets();
   const st = app.state;
@@ -476,6 +520,316 @@ function confetti() {
   const r = { left: window.innerWidth / 2 - 40, top: window.innerHeight * 0.34, width: 80, height: 80,
     right: window.innerWidth / 2 + 40, bottom: window.innerHeight * 0.34 + 80 };
   ui.burnFX(r);
+}
+
+/* ------------------------------------------------------ online party ---- */
+
+/**
+ * Every push from the host lands here. Pushes are applied one at a time — the
+ * choreography is async, and two overlapping renders would fight each other.
+ */
+let netQueue = Promise.resolve();
+
+function onNetState(s, events) {
+  app.netState = s;
+  netQueue = netQueue
+    .then(() => applyNetState(s, events || []))
+    .catch((err) => console.error('[shithead] state push failed', err));
+}
+
+async function applyNetState(s, events) {
+  renderLobby(s);
+
+  if (s.stage !== 'game' || !s.game) {
+    // The host sent us back to the lobby — clear the table and wait there.
+    if (app.state) {
+      app.state = null;
+      app.mode = 'setup';
+      app.overShown = false;
+      app.selection.clear();
+      ui.clearFX();
+      $('board').classList.add('pre-game');
+      ui.setStatus('Shithead');
+      showPane(s.isHost ? 'pane-host' : 'pane-wait');
+      const hint = $('wait-hint');
+      if (hint) hint.textContent = 'Waiting for the host to deal again…';
+      ui.openSheet('sheet-setup');
+    }
+    return;
+  }
+  if (s.you < 0) return;                 // we're not seated (shouldn't happen)
+
+  const firstFrame = !app.state;
+  YOU = s.you;
+
+  if (firstFrame) {
+    app.selection.clear();
+    app.swapPicks = [null, null, null];
+    app.overShown = false;
+    ui.clearFX();
+    await ui.closeAllSheets();
+    $('board').classList.remove('pre-game');
+  }
+
+  const burn = events.find((e) => e.type === 'burn');
+  const play = events.find((e) => e.type === 'play' || e.type === 'blind-flip');
+  const pickup = events.find((e) => e.type === 'pickup');
+  const flip = events.find((e) => e.type === 'blind-flip');
+
+  const discardR = ui.discardRect();
+  const deckR = ui.deckRect();
+
+  // Turn the blind card over where it sits, for everyone, before the board
+  // changes underneath it.
+  if (flip && !firstFrame) {
+    const rect = flip.player === YOU ? myBlindRect(flip.card.id) : oppStackRect(flip.player);
+    if (rect) await ui.blindReveal(rect, flip.card);
+  }
+
+  // Cards that a burn is about to delete get flown onto the pile first, or
+  // they'd never be seen landing.
+  if (burn && play && !firstFrame) {
+    const played = play.cards || [play.card];
+    const items = played.map((c) => {
+      const el = ui.cardElById(c.id);
+      const rect = el ? el.getBoundingClientRect() : ui.seatRect(app.state, YOU, play.player);
+      if (el) el.style.visibility = 'hidden';
+      return { card: c, rect };
+    });
+    await ui.flyCards(items, discardR, { duration: 300, stagger: 50 });
+  }
+
+  // Likewise a pile vanishing into somebody else's hand.
+  if (pickup && pickup.player !== YOU && pickup.cards.length && !firstFrame) {
+    const items = pickup.cards.slice(-4).map((c) => ({ card: c, rect: discardR }));
+    await ui.flyCards(items, ui.seatRect(app.state, YOU, pickup.player), { duration: 340, stagger: 45, spread: 6 });
+  }
+
+  const prev = firstFrame ? new Map() : ui.snapshot();
+  app.state = s.game;
+
+  const me = s.game.players[YOU];
+  if (s.game.phase === 'swap') app.mode = me.swapped ? 'play' : 'swap';
+  else app.mode = 'play';
+  if (me.swapped) app.swapPicks = [null, null, null];
+
+  render();
+
+  const enterFrom = (el, fid) => {
+    if (ui.els['discard-cards'].contains(el)) return discardR;
+    if (pickup && ownerOf(el, fid) === pickup.player) return discardR;
+    return deckR;
+  };
+  await ui.flipFrom(prev, firstFrame ? (() => deckR) : enterFrom,
+    { duration: burn ? 220 : 420, stagger: firstFrame ? 26 : 0 });
+
+  for (const ev of events) await announce(ev);
+  ui.clearFX();
+  render();
+
+  if (s.game.phase === 'over') showResults();
+}
+
+function myBlindRect(cardId) {
+  const i = app.state?.players[YOU]?.blind.findIndex((c) => c.id === cardId);
+  return i >= 0 ? ui.slotRect(i) : null;
+}
+
+function oppStackRect(playerIndex) {
+  const box = ui.els.opponents.querySelector(`.opp[data-p="${playerIndex}"] .opp-stack`);
+  return box ? box.getBoundingClientRect() : ui.seatRect(app.state, YOU, playerIndex);
+}
+
+/* -- lobby ---------------------------------------------------------------- */
+
+const PANES = ['pane-home', 'pane-bots', 'pane-online', 'pane-host', 'pane-join', 'pane-wait'];
+
+function showPane(id) {
+  for (const p of PANES) {
+    const el = $(p);
+    if (el) el.hidden = p !== id;
+  }
+  const body = document.querySelector('#sheet-setup .sheet-body');
+  if (body) body.scrollTop = 0;
+}
+
+function myName() {
+  const input = $('my-name');
+  const typed = (input?.value || '').trim().slice(0, 14);
+  const name = typed || storedName() || 'Player';
+  try { localStorage.setItem('shithead_name', name); } catch { /* ignore */ }
+  return name;
+}
+
+function storedName() {
+  try { return localStorage.getItem('shithead_name') || ''; } catch { return ''; }
+}
+
+function renderLobby(s) {
+  if (!s) return;
+  const list = $(s.isHost ? 'host-lobby' : 'join-lobby');
+  if (!list) return;
+  list.textContent = '';
+
+  for (const seat of s.seats) {
+    const li = document.createElement('li');
+    if (!seat.connected) li.classList.add('off');
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    const name = document.createElement('span');
+    name.textContent = seat.name + (seat.isYou ? ' (you)' : '');
+    li.append(dot, name);
+    if (seat.isHost) {
+      const tag = document.createElement('span');
+      tag.className = 'tag';
+      tag.textContent = 'Host';
+      li.append(tag);
+    } else if (!seat.connected) {
+      const tail = document.createElement('span');
+      tail.className = 'waiting';
+      tail.textContent = 'reconnecting…';
+      li.append(tail);
+    }
+    list.append(li);
+  }
+  for (let i = s.seats.length; i < net.MAX_PLAYERS; i++) {
+    const li = document.createElement('li');
+    li.className = 'empty';
+    li.textContent = 'empty seat';
+    list.append(li);
+  }
+
+  if (s.isHost) {
+    const start = $('btn-start');
+    if (start) start.disabled = s.seats.length < net.MIN_PLAYERS || s.stage !== 'lobby';
+    const hint = $('host-hint');
+    if (hint && s.stage === 'lobby') {
+      hint.textContent = s.seats.length < net.MIN_PLAYERS
+        ? 'Waiting for someone to join…'
+        : `${s.seats.length} at the table. Start when you're ready.`;
+    }
+  }
+}
+
+/* -- hosting -------------------------------------------------------------- */
+
+function joinURL(code) {
+  const u = new URL(window.location.href);
+  u.hash = '';
+  u.search = '?join=' + code;
+  return u.toString();
+}
+
+function drawQR(code) {
+  const wrap = document.querySelector('.qr-wrap');
+  const canvas = $('room-qr');
+  if (!window.QRCode || !canvas) { if (wrap) wrap.hidden = true; return; }
+  wrap.hidden = false;
+  window.QRCode.toCanvas(canvas, joinURL(code), { width: 168, margin: 0 }, (err) => {
+    if (err) { console.warn('[shithead] QR failed', err); wrap.hidden = true; }
+  });
+}
+
+async function hostParty() {
+  const name = myName();
+  showPane('pane-host');
+  $('host-hint').textContent = 'Opening a room…';
+  $('room-code').textContent = '····';
+  document.querySelector('.qr-wrap').hidden = true;
+
+  const session = new net.HostSession({
+    hostName: name,
+    onState: onNetState,
+    onLog: (m) => ui.toast(m, { ms: 1800 }),
+  });
+  try {
+    const code = await session.open();
+    app.net = {
+      isHost: true,
+      session,
+      send(action) {
+        const res = session.applyAction(session.hostId, action);
+        if (!res.ok) ui.toast(net.reasonText(res.reason), { ms: 1500 });
+        return res.ok;
+      },
+    };
+    $('room-code').textContent = code;
+    drawQR(code);
+    renderLobby(app.netState);
+  } catch (err) {
+    session.close();
+    app.net = null;
+    showPane('pane-online');
+    ui.toast(err.message || 'Could not open a room.', { ms: 2400 });
+  }
+}
+
+/* -- joining -------------------------------------------------------------- */
+
+function setJoinStatus(text) {
+  const el = $('join-status');
+  if (!el) return;
+  el.hidden = !text;
+  el.textContent = text || '';
+}
+
+async function joinParty() {
+  const code = ($('join-code').value || '').trim().toUpperCase();
+  if (code.length < 4) { setJoinStatus('A room code is four or five characters.'); return; }
+  const name = myName();
+  setJoinStatus('Connecting…');
+  $('btn-join').disabled = true;
+
+  const session = new net.ClientSession(code, name, {
+    onState: onNetState,
+    onError: (msg) => ui.toast(msg, { ms: 1800 }),
+    onStatus: onNetStatus,
+  });
+  try {
+    await session.connect();
+    app.net = { isHost: false, session, send: (action) => session.sendAction(action) };
+    setJoinStatus('');
+    showPane('pane-wait');
+    renderLobby(app.netState);
+  } catch (err) {
+    session.close();
+    setJoinStatus(err.message || 'Could not join that party.');
+  } finally {
+    $('btn-join').disabled = false;
+  }
+}
+
+function onNetStatus(status) {
+  const hint = $('wait-hint');
+  if (status === 'reconnecting') {
+    ui.setStatus('Reconnecting…');
+    if (hint) hint.textContent = 'Lost the host — trying to get back in…';
+  } else if (status === 'connected') {
+    if (hint) hint.textContent = 'Waiting for the host to deal…';
+    if (app.state) render();
+  } else if (status === 'gave-up') {
+    ui.toast("Couldn't get back to the party.", { ms: 2600 });
+    if (hint) hint.textContent = "Couldn't reach the host. The party may be over.";
+  }
+}
+
+/* -- leaving -------------------------------------------------------------- */
+
+function leaveParty({ quiet = false } = {}) {
+  if (!app.net) return;
+  try { app.net.session.close(); } catch { /* ignore */ }
+  app.net = null;
+  app.netState = null;
+  app.state = null;
+  app.mode = 'setup';
+  app.overShown = false;
+  netQueue = Promise.resolve();
+  ui.clearFX();
+  if (!quiet) {
+    $('board').classList.add('pre-game');
+    ui.setStatus('Shithead');
+    showPane('pane-home');
+  }
 }
 
 /* ----------------------------------------------------------- handlers --- */
@@ -560,10 +914,78 @@ ui.initUI({
 
 document.getElementById('btn-rules').addEventListener('click', () => ui.openSheet('sheet-rules'));
 document.getElementById('btn-rules-2').addEventListener('click', () => ui.openSheet('sheet-rules'));
-document.getElementById('btn-new').addEventListener('click', () => ui.openSheet('sheet-setup'));
+document.getElementById('btn-new').addEventListener('click', () => {
+  showPane(online() ? (app.net.isHost ? 'pane-host' : 'pane-wait') : 'pane-home');
+  ui.openSheet('sheet-setup');
+});
 document.getElementById('btn-again').addEventListener('click', async () => {
   await ui.closeSheet('sheet-over');
+  if (online()) {
+    // Keep the party together: the host re-deals to the same seats.
+    if (app.net.isHost) { app.net.session.resetToLobby(); return; }
+    showPane('pane-wait');
+    const hint = $('wait-hint');
+    if (hint) hint.textContent = 'Waiting for the host to deal again…';
+    ui.openSheet('sheet-setup');
+    return;
+  }
+  showPane('pane-home');
   ui.openSheet('sheet-setup');
+});
+
+/* -- start-screen panes --------------------------------------------------- */
+
+document.querySelector('#sheet-setup .sheet-body').addEventListener('click', (e) => {
+  const back = e.target.closest('[data-pane]');
+  if (back) showPane(back.dataset.pane);
+});
+
+$('btn-mode-bots').addEventListener('click', () => showPane('pane-bots'));
+$('btn-mode-online').addEventListener('click', () => {
+  const input = $('my-name');
+  if (input && !input.value) input.value = storedName();
+  showPane('pane-online');
+});
+$('btn-host').addEventListener('click', hostParty);
+$('btn-join-pane').addEventListener('click', () => { setJoinStatus(''); showPane('pane-join'); });
+
+$('btn-start').addEventListener('click', () => {
+  if (app.net?.isHost) app.net.session.startGame();
+});
+$('btn-host-cancel').addEventListener('click', () => leaveParty());
+$('btn-leave').addEventListener('click', () => leaveParty());
+$('btn-join').addEventListener('click', joinParty);
+$('join-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') joinParty(); });
+$('join-code').addEventListener('input', (e) => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+});
+
+// The room code is the invite: tapping it copies a link that opens the game
+// with the code already filled in.
+$('room-code').addEventListener('click', async () => {
+  const code = app.net?.isHost && app.net.session.code;
+  if (!code) return;
+  const link = joinURL(code);
+  let ok = false;
+  try {
+    await navigator.clipboard.writeText(link);
+    ok = true;
+  } catch {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = link;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.append(ta);
+      ta.select();
+      ok = document.execCommand('copy');
+      ta.remove();
+    } catch { /* ignore */ }
+  }
+  const el = $('room-code');
+  el.classList.add('copied');
+  setTimeout(() => el.classList.remove('copied'), 900);
+  ui.toast(ok ? 'Invite link copied' : `Room code: ${code}`, { ms: 1400 });
 });
 
 document.getElementById('player-count').addEventListener('click', (e) => {
@@ -585,7 +1007,11 @@ document.getElementById('btn-deal').addEventListener('click', async () => {
 
 document.getElementById('btn-action').addEventListener('click', () => {
   if (app.mode === 'swap') { confirmSwap(); return; }
-  if (app.state?.phase === 'over') { ui.openSheet('sheet-setup'); return; }
+  if (app.state?.phase === 'over') {
+    showPane(online() ? (app.net.isHost ? 'pane-host' : 'pane-wait') : 'pane-home');
+    ui.openSheet('sheet-setup');
+    return;
+  }
   if (app.selection.size) { playSelection(); return; }
   if (!myLegalIds().size) takePile();
 });
@@ -622,4 +1048,16 @@ document.addEventListener('gesturestart', (e) => e.preventDefault());
 /* ---------------------------------------------------------------- go ---- */
 
 ui.setStatus('Shithead');
+
+// ?join=ABCD — the QR code and the copied invite link both land here, so a
+// guest arrives with the code already typed in for them.
+const invite = new URLSearchParams(location.search).get('join');
+if (invite && /^[A-Z0-9]{4,5}$/i.test(invite)) {
+  $('my-name').value = storedName();
+  $('join-code').value = invite.toUpperCase();
+  showPane('pane-join');
+} else {
+  showPane('pane-home');
+}
+
 ui.openSheet('sheet-setup', { modal: true });

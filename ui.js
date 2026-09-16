@@ -56,7 +56,10 @@ function cardEl(card, opts = {}) {
   const el = document.createElement('div');
   el.className = 'card' + (opts.mini ? ' mini' : '');
   if (opts.fid) el.dataset.fid = opts.fid;
-  if (!card) {
+  // `card.hidden` is a redacted placeholder from an online party — a card we
+  // know is there but are not entitled to see. It renders exactly like any
+  // other back, and carries no data-id, so it can never be grabbed or played.
+  if (!card || card.hidden) {
     el.classList.add('back');
     return el;
   }
@@ -106,6 +109,7 @@ function renderOpponents(v) {
     box.dataset.p = p.index;
     if (state.phase === 'playing' && state.current === p.index) box.classList.add('is-turn');
     if (p.finishedAt !== null) box.classList.add('is-out');
+    if (p.connected === false) box.classList.add('is-offline');
 
     const head = document.createElement('div');
     head.className = 'opp-head';
