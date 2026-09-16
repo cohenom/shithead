@@ -27,6 +27,7 @@ const app = {
 
   // online party mode — null for the offline vs-bots game
   net: null,              // { isHost, session, send(action) }
+  pending: 0,             // timestamp of an action awaiting the host's answer
   netState: null,         // last redacted snapshot from the host
   overShown: false,
 };
@@ -51,10 +52,21 @@ function myLegalIds() {
 }
 
 function interactive() {
+  // Online, an action is a request: stay untouchable until the host's answer
+  // lands, so a double-tap can't fire the same move twice. Self-healing — if
+  // the host rejects it or the push is lost, the latch times out on its own.
+  if (online() && app.pending && Date.now() - app.pending < 4000) return false;
   return !app.busy
     && app.state?.phase === 'playing'
     && app.state.current === YOU
     && app.mode === 'play';
+}
+
+/** Ask the host to make a move on our behalf. */
+function sendNet(action) {
+  app.pending = Date.now();
+  app.net.send(action);
+  render();
 }
 
 function view() {
@@ -94,8 +106,12 @@ function updateChrome() {
 
   if (app.mode === 'swap') {
     const n = app.swapPicks.filter(Boolean).length;
-    ui.setStatus(n === 3 ? 'Happy with those three?' : `Choose ${3 - n} more for your face-up row`);
-    ui.setActions({ primary: 'Confirm', primaryEnabled: n === 3, secondary: n ? 'Clear' : null });
+    // Online, the Confirm is in flight to the host — don't let it be sent twice.
+    const sent = online() && !!app.pending;
+    ui.setStatus(sent
+      ? 'Locking those in…'
+      : (n === 3 ? 'Happy with those three?' : `Choose ${3 - n} more for your face-up row`));
+    ui.setActions({ primary: 'Confirm', primaryEnabled: n === 3 && !sent, secondary: (n && !sent) ? 'Clear' : null });
     return;
   }
 
@@ -196,8 +212,7 @@ async function confirmSwap() {
   // Online the host owns the deal: send the picks and wait for the state push
   // that comes back with everyone else's readiness.
   if (online()) {
-    const picks = app.swapPicks.slice();
-    app.net.send({ kind: 'swap', cardIds: picks });
+    sendNet({ kind: 'swap', cardIds: app.swapPicks.slice() });
     return;
   }
 
@@ -357,11 +372,7 @@ async function playSelection(extraId) {
   if (![...ids].every((id) => legal.has(id))) return false;
 
   app.selection.clear();
-  if (online()) {
-    app.net.send({ kind: 'play', cardIds: [...ids] });
-    render();
-    return true;
-  }
+  if (online()) { sendNet({ kind: 'play', cardIds: [...ids] }); return true; }
   await guarded(() => applyAction(YOU, () => playCards(app.state, YOU, [...ids])));
   render();
   runLoop();
@@ -371,7 +382,7 @@ async function playSelection(extraId) {
 async function takePile() {
   if (!interactive()) return;
   app.selection.clear();
-  if (online()) { app.net.send({ kind: 'pickup' }); render(); return; }
+  if (online()) { sendNet({ kind: 'pickup' }); return; }
   await guarded(() => applyAction(YOU, () => pickUpPile(app.state, YOU)));
   render();
   runLoop();
@@ -383,7 +394,7 @@ async function flipMyBlind(slotIndex) {
   const card = me.blind[slotIndex];
   if (!card) return;
   const rect = ui.slotRect(slotIndex);
-  if (online()) { app.net.send({ kind: 'blind', cardId: card.id }); return; }
+  if (online()) { sendNet({ kind: 'blind', cardId: card.id }); return; }
   await guarded(async () => {
     render();
     await ui.blindReveal(rect, card);
@@ -538,6 +549,7 @@ function onNetState(s, events) {
 }
 
 async function applyNetState(s, events) {
+  app.pending = 0;
   renderLobby(s);
 
   if (s.stage !== 'game' || !s.game) {
@@ -749,7 +761,7 @@ async function hostParty() {
       session,
       send(action) {
         const res = session.applyAction(session.hostId, action);
-        if (!res.ok) ui.toast(net.reasonText(res.reason), { ms: 1500 });
+        if (!res.ok) { app.pending = 0; ui.toast(net.reasonText(res.reason), { ms: 1500 }); }
         return res.ok;
       },
     };
@@ -782,7 +794,7 @@ async function joinParty() {
 
   const session = new net.ClientSession(code, name, {
     onState: onNetState,
-    onError: (msg) => ui.toast(msg, { ms: 1800 }),
+    onError: (msg) => { app.pending = 0; ui.toast(msg, { ms: 1800 }); render(); },
     onStatus: onNetStatus,
   });
   try {
@@ -824,6 +836,7 @@ function leaveParty({ quiet = false } = {}) {
   app.mode = 'setup';
   app.overShown = false;
   netQueue = Promise.resolve();
+  app.pending = 0;
   ui.clearFX();
   if (!quiet) {
     $('board').classList.add('pre-game');
